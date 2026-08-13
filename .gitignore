@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# never commit real patient data
+data/raw/
+data/synthetic/*.csv
+!data/synthetic/.gitkeep

@@ -1,0 +1,22 @@
+# Central configuration. Edit here rather than in code.
+
+data:
+  source: synthetic          # switch to "aric" when the real data arrives
+  aric_path: data/raw/aric_ncs.csv
+  synthetic:
+    n: 1500
+    seed: 42
+    target_signal_fraction: 0.30   # ~upper bound on recoverable BAG R^2 (clean)
+    cell_missing_rate: 0.05
+    group_missing_rate: 0.02
+    outlier_rate: 0.003
+    prevalent_dementia_rate: 0.04
+    max_followup_years: 10.0
+
+split:
+  test_size: 0.2
+  val_size: 0.2
+  seed: 42
+
+evaluation:
+  bag_r2_threshold: 0.20     # pre-registered "meaningful fidelity" threshold

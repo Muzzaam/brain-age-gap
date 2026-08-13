@@ -1,0 +1,10 @@
+numpy>=1.21.6
+pandas>=2.0
+scikit-learn>=1.3
+pyyaml>=6.0
+# added as the project grows:
+# xgboost>=2.0        # strong tabular baseline (RQ1/RQ2)
+# torch>=2.0          # small MLP + multi-task / continual-learning framings
+# shap>=0.44          # feature attribution (interrogation)
+# lifelines>=0.27     # C-index / time-to-event modelling (dementia outcome)
+# matplotlib>=3.7     # figures

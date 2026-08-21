@@ -1,2 +1,3 @@
-"""Model families (next step): regularised linear, XGBoost, small MLP.
-Each will expose fit(X, y) / predict(X) and be benchmarked on the BAG task."""
+from .estimators import build, MODEL_BUILDERS, PRINCIPAL_MODELS, Model
+
+__all__ = ["build", "MODEL_BUILDERS", "PRINCIPAL_MODELS", "Model"]

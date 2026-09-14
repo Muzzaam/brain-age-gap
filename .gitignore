@@ -10,3 +10,5 @@ data/synthetic/*.csv
 !data/synthetic/.gitkeep
 
 .venv-linux/
+
+.venv-linux/

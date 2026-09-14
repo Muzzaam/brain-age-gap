@@ -8,3 +8,5 @@ venv/
 data/raw/
 data/synthetic/*.csv
 !data/synthetic/.gitkeep
+
+.venv-linux/

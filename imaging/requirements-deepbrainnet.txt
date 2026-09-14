@@ -1,0 +1,7 @@
+# DeepBrainNet route (run_deepbrainnet.py). Install into a Python env.
+# First run downloads pretrained weights (needs internet).
+antspyx
+antspynet
+tensorflow
+# GPU note: on Windows, TensorFlow uses your RTX 3080 via WSL2 + CUDA, or a
+# native GPU build. CPU-only also works, just slower per scan.

@@ -83,5 +83,14 @@ def test_preflight_flags_scrambled_scan_linkage():
     assert n_err >= 1 and any("wrong participants" in l for l in lines), lines
 
 
+def test_preflight_warns_when_age_looks_like_an_earlier_visit():
+    df = load_data(source="synthetic", n=300, seed=0)
+    young = df.assign(**{schema.AGE_COL: df[schema.AGE_COL] - 24})   # baseline-visit age by mistake
+    lines, _, _ = preflight.check(young, quick_cfg())
+    assert any("visit 5 columns" in l for l in lines), lines
+    lines, _, _ = preflight.check(df, quick_cfg())
+    assert not any("visit 5 columns" in l for l in lines)
+
+
 if __name__ == "__main__":
     run_tests(globals())

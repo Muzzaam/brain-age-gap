@@ -145,6 +145,12 @@ def check(df, cfg):
             warn("BAG is strongly age-dependent; expect a large 'covariates' R2 in RQ1 on uncorrected BAG.")
     if age.notna().any() and (age.min() < 40 or age.max() > 100):
         warn("some ages are outside 40-100; check units / which visit's age was used.")
+    # ARIC data hold each variable once per visit. Visit 5 participants were about
+    # 67 to 90, so a much younger median means an earlier visit's column was mapped
+    # (and the biomarkers may come from the wrong visit too).
+    if age.notna().any() and age.median() < 65:
+        warn(f"median age is {age.median():.0f}, but visit 5 participants were about 67 to 90: "
+             "check that age and the biomarkers are mapped from the visit 5 columns")
 
     # healthy reference
     ref = cfg["bias_correction"].get("reference_column")

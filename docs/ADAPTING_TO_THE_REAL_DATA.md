@@ -39,6 +39,11 @@ ARIC_COLUMN_MAP = {
 The full list of names to map to is `schema.REQUIRED_COLUMNS` (preflight prints
 any that are missing).
 
+**1b. Variables exist once per visit** (as in UK Biobank's "Instance 0/1/2/3" columns).
+Map the **visit 5** version of every variable: age, biomarkers and covariates all
+come from the same visit as the MRI. The preflight warns if the median age looks
+like an earlier visit.
+
 **2. The data comes as several files** (likely: ARIC delivers one file per form
 or visit). List them in `config.yaml`; they are joined on participant id. The
 first file must have one row per participant:

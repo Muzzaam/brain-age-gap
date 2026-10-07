@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/data/raw/**)",
+      "Read(**/dbn_out/**)",
+      "Read(**/nifti_out/**)",
+      "Read(**/*.sas7bdat)",
+      "Read(**/*.dta)",
+      "Read(**/*.nii)",
+      "Read(**/*.nii.gz)"
+    ]
+  }
+}

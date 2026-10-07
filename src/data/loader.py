@@ -29,8 +29,9 @@ def load_data(source="synthetic", path=None, brain_age_path=None, scan_id_map_pa
     source : {"synthetic", "aric"}
         "synthetic" generates a mock ARIC-shaped cohort (kwargs forwarded to
         generate_synthetic_cohort). "aric" loads the real dataset.
-    path : str, optional
-        Path to the ARIC-NCS tabular file (required when source="aric").
+    path : str or list of str, optional
+        Path to the ARIC-NCS tabular file, or several files joined on
+        participant id (required when source="aric").
     brain_age_path : str, optional
         Path to the brain-age CSV from the imaging step. If omitted, the
         tabular file must already contain brain_age or bag.
@@ -59,11 +60,14 @@ def load_from_config(cfg):
     if source == "synthetic":
         return load_data("synthetic", **cfg["data"]["synthetic"])
     aric = cfg["data"]["aric"]
-    tab = resolve_path(aric["tabular_path"])
-    if not tab.exists():
-        raise FileNotFoundError(
-            f"ARIC tabular file not found at {tab}. Set data.aric.tabular_path "
-            f"in config.yaml.")
+    paths = aric["tabular_path"]
+    paths = [paths] if isinstance(paths, str) else list(paths)
+    tabs = [resolve_path(p) for p in paths]
+    for tab in tabs:
+        if not tab.exists():
+            raise FileNotFoundError(
+                f"ARIC tabular file not found at {tab}. Set data.aric.tabular_path "
+                f"in config.yaml.")
     ba = aric.get("brain_age_path")
     ba = resolve_path(ba) if ba else None
     if ba is not None and not ba.exists():
@@ -74,14 +78,16 @@ def load_from_config(cfg):
     mp = resolve_path(mp) if mp else None
     if mp is not None and not mp.exists():
         raise FileNotFoundError(f"Scan id map not found at {mp} (data.aric.scan_id_map_path).")
-    return load_data("aric", path=str(tab), brain_age_path=str(ba) if ba else None,
+    return load_data("aric", path=[str(t) for t in tabs], brain_age_path=str(ba) if ba else None,
                      scan_id_map_path=str(mp) if mp else None)
 
 
 # Fill this in when the real data lands. The keys are the ARIC column names as
-# they actually appear in the delivered file; the values are our schema names.
+# they actually appear in the delivered file(s); the values are our schema names.
+# The participant id column must map to "participant_id" in EVERY file.
 # Left empty on purpose — populate it once you can see the real columns.
 ARIC_COLUMN_MAP = {
+    # "ID_C":    "participant_id",
     # "GRIPSTR": "grip_strength",
     # "SYSBP":   "sbp",
     # ...
@@ -104,6 +110,37 @@ def _read_any(path):
     return readers[ext](path)
 
 
+def _read_tabular(paths):
+    """
+    Read one or several tabular files, rename columns via ARIC_COLUMN_MAP, and
+    join them on participant id. The first file is the base (one row per
+    participant, e.g. the visit 5 file); later files are left-joined onto it.
+    A column present in more than one file is kept from the first file only,
+    and noted in df.attrs["merge_notes"] for the preflight to show.
+    """
+    paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+    notes, df = [], None
+    for p in paths:
+        part = _read_any(p).rename(columns=ARIC_COLUMN_MAP)
+        if schema.ID_COL not in part.columns:
+            raise ValueError(
+                f"{Path(p).name} has no participant id column after renaming. Map its id "
+                f"column to {schema.ID_COL!r} in ARIC_COLUMN_MAP. Its columns: {list(part.columns)[:30]}")
+        part[schema.ID_COL] = part[schema.ID_COL].astype(str).str.strip()
+        if part[schema.ID_COL].duplicated().any():
+            raise ValueError(f"{Path(p).name} has more than one row per participant; "
+                             f"reduce it to one row each (e.g. the visit 5 record) before joining.")
+        if df is None:
+            df = part
+            continue
+        dup = [c for c in part.columns if c in df.columns and c != schema.ID_COL]
+        if dup:
+            notes.append(f"{Path(p).name}: kept {dup} from the earlier file")
+        df = df.merge(part.drop(columns=dup), on=schema.ID_COL, how="left")
+    df.attrs["merge_notes"] = notes
+    return df
+
+
 def _load_aric(path, brain_age_path=None, scan_id_map_path=None):
     """
     Load and normalise the real ARIC-NCS dataset onto our schema.
@@ -111,7 +148,7 @@ def _load_aric(path, brain_age_path=None, scan_id_map_path=None):
     Steps that need the real file before they can be finished are marked TODO;
     everything else is ready.
     """
-    df = _read_any(path).rename(columns=ARIC_COLUMN_MAP)
+    df = _read_tabular(path)
     for col, mapping in ARIC_VALUE_MAPS.items():
         if col in df.columns:
             df[col] = df[col].map(mapping)
@@ -157,6 +194,7 @@ def link_brain_age(df, ba, id_map=None):
     if ba[schema.ID_COL].duplicated().any():
         raise ValueError("More than one usable brain age for some participants; keep one scan each.")
 
+    attrs = dict(df.attrs)  # e.g. merge notes from reading several files; merge() can drop them
     df = df.copy()
     df[schema.ID_COL] = df[schema.ID_COL].astype(str).str.strip()
     known = set(df[schema.ID_COL])
@@ -166,7 +204,7 @@ def link_brain_age(df, ba, id_map=None):
     df = df.drop(columns=[schema.BRAIN_AGE_COL], errors="ignore").merge(
         ba[[schema.ID_COL, schema.BRAIN_AGE_COL]], on=schema.ID_COL, how="left")
     report["participants_with_brain_age"] = int(df[schema.BRAIN_AGE_COL].notna().sum())
-    df.attrs["linkage"] = report
+    df.attrs = {**attrs, "linkage": report}
     return df
 
 

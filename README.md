@@ -31,7 +31,9 @@ are what you carry away from the secure machine, subject to the data-use agreeme
 
 Full step-by-step instructions for the secure machine, including the imaging
 step and checking that scans link to the right participants:
-**[docs/RUNNING_AT_WITS.md](docs/RUNNING_AT_WITS.md)**. In short:
+**[docs/RUNNING_AT_WITS.md](docs/RUNNING_AT_WITS.md)**. If the files are stored differently
+than expected, see **[docs/ADAPTING_TO_THE_REAL_DATA.md](docs/ADAPTING_TO_THE_REAL_DATA.md)**
+(including how to get help from Claude without sharing data). In short:
 
 1. Put the ARIC-NCS extract and the brain-age CSV (`participant_id, brain_age`,
    from the imaging step) in `data/raw/` (git-ignored; never commit patient data),

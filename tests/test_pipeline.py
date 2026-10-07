@@ -118,5 +118,29 @@ def test_linkage_rejects_two_scans_for_one_participant():
     raise AssertionError("expected ValueError for duplicate scans")
 
 
+def test_aric_loader_joins_several_files():
+    df = load_data(source="synthetic", n=30, seed=5)
+    a = df[[schema.ID_COL, schema.AGE_COL, "sbp"]].rename(columns={schema.ID_COL: "ID_C"})
+    b = df.drop(columns=[schema.AGE_COL, "sbp"]).rename(columns={schema.ID_COL: "ID_C"})
+    b["sbp"] = 0.0                                          # duplicate column: first file wins
+    old = dict(loader.ARIC_COLUMN_MAP)
+    loader.ARIC_COLUMN_MAP["ID_C"] = schema.ID_COL
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            a.to_csv(Path(d) / "a.csv", index=False)
+            b.iloc[:25].to_csv(Path(d) / "b.csv", index=False)  # 5 participants missing from file b
+            out = load_data(source="aric", path=[str(Path(d) / "a.csv"), str(Path(d) / "b.csv")])
+    finally:
+        loader.ARIC_COLUMN_MAP.clear()
+        loader.ARIC_COLUMN_MAP.update(old)
+    assert len(out) == 30 and np.allclose(out["sbp"], df["sbp"], equal_nan=True)
+    assert out[schema.COGNITIVE_COL].iloc[25:].isna().all()
+    # the duplicate-column note survives the brain-age join for the preflight to show
+    ba = pd.DataFrame({schema.ID_COL: df[schema.ID_COL], schema.BRAIN_AGE_COL: 80.0})
+    out.attrs["merge_notes"] = ["b.csv: kept ['sbp'] from the earlier file"]
+    linked = loader.link_brain_age(out, ba)
+    assert linked.attrs["merge_notes"] and "linkage" in linked.attrs
+
+
 if __name__ == "__main__":
     run_tests(globals())

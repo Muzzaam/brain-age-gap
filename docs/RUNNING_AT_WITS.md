@@ -122,7 +122,10 @@ count as "no usable brain age" in the participant flow).
 
 ## 5. Map the ARIC columns onto the pipeline
 
-Open the ARIC data dictionary next to `src/data/loader.py` and fill in:
+Open the ARIC data dictionary next to `src/data/loader.py` and fill in the items
+below. `docs/ADAPTING_TO_THE_REAL_DATA.md` has worked examples for each case
+(several files, coded values, dates, units) and a template for asking Claude.
+
 
 1. `ARIC_COLUMN_MAP`: each ARIC variable name to our name (`grip_strength`,
    `sbp`, `cognitive_score` and so on; the full list is in `src/data/schema.py`).

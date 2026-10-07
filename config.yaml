@@ -4,7 +4,10 @@
 data:
   source: synthetic          # switch to "aric" when the real data arrives
   aric:
-    tabular_path: data/raw/aric_ncs.csv      # ARIC-NCS visit 5 variables (csv, sas7bdat, dta, sav, parquet)
+    # ARIC-NCS visit 5 variables (csv, sas7bdat, dta, sav, parquet). One file, or a list
+    # of files joined on participant id, the first being one row per participant:
+    #   tabular_path: [data/raw/v5.sas7bdat, data/raw/ncs.sas7bdat, data/raw/dementia.sas7bdat]
+    tabular_path: data/raw/aric_ncs.csv
     brain_age_path: data/raw/brain_age.csv   # participant_id, brain_age (output of the imaging step)
     scan_id_map_path: null                   # optional CSV (scan_id, participant_id) if scan names are not ARIC ids
   synthetic:

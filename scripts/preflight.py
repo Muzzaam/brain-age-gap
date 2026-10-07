@@ -34,7 +34,9 @@ def _load_unvalidated(cfg):
     a = cfg["data"]["aric"]
     ba = resolve_path(a["brain_age_path"]) if a.get("brain_age_path") else None
     mp = resolve_path(a["scan_id_map_path"]) if a.get("scan_id_map_path") else None
-    return loader._load_aric(str(resolve_path(a["tabular_path"])), str(ba) if ba else None,
+    paths = a["tabular_path"]
+    paths = [paths] if isinstance(paths, str) else list(paths)
+    return loader._load_aric([str(resolve_path(p)) for p in paths], str(ba) if ba else None,
                              str(mp) if mp else None)
 
 
@@ -102,6 +104,9 @@ def check(df, cfg):
     if "n_implausible" in table:
         table = suppress_small(table.rename(columns={"n_implausible": "n"}), "n", min_cell) \
             .rename(columns={"n": "n_implausible"})
+
+    for note in df.attrs.get("merge_notes", []):
+        warn(f"duplicate column across files: {note}")
 
     # scan-to-participant linkage
     link = df.attrs.get("linkage")

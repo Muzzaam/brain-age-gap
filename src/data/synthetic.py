@@ -19,6 +19,9 @@ Design notes
 3. Cognitive score and incident dementia are generated downstream of BAG and
    age, so RQ2 ("does BAG add value beyond raw biomarkers?") has real structure
    to detect — the ageing signal genuinely flows through BAG into the outcomes.
+4. Real-data mess is imitated so the pipeline is tested against it: some BAG
+   values missing (failed scan QC), some outcomes missing, a healthy-reference
+   flag for bias correction, and a race column for subgroup reporting.
 
 Everything is seeded for reproducibility.
 """
@@ -47,6 +50,9 @@ def generate_synthetic_cohort(
     group_missing_rate=0.02,        # fraction of participants missing an entire group
     outlier_rate=0.003,             # fraction of biomarker cells set to implausible values
     prevalent_dementia_rate=0.04,   # baseline fraction with dementia already present
+    bag_missing_rate=0.0,           # fraction of BAG values missing (failed scan QC)
+    outcome_missing_rate=0.0,       # fraction missing cognitive score / dementia follow-up
+    bag_age_slope=0.0,              # extra linear age-dependence of BAG (brain-age model bias)
     max_followup_years=10.0,
 ):
     """Return a DataFrame conforming to schema.REQUIRED_COLUMNS."""
@@ -92,7 +98,7 @@ def generate_synthetic_cohort(
     f = float(target_signal_fraction)
     eps = rng.normal(0, 1, n)
     bag_std = np.sqrt(f) * signal + np.sqrt(1 - f) * eps
-    bag = bag_sd * bag_std                      # mean ~0, sd ~bag_sd (years)
+    bag = bag_sd * bag_std + bag_age_slope * age_c   # mean ~0, sd ~bag_sd (years)
     brain_age = age + bag
 
     # --- cognitive score (RQ2 outcome A): worse with higher BAG and age ------
@@ -114,6 +120,16 @@ def generate_synthetic_cohort(
     if prevalent.mean() > 0:
         keep = rng.random(n) < (prevalent_dementia_rate / max(prevalent.mean(), 1e-6))
         prevalent = (prevalent & keep).astype(int)
+
+    # --- healthy reference set (for bias correction) and race ---------------
+    # Flagged at random among the dementia-free, so it is unrelated to BAG and
+    # the correction can be checked. (A reference set chosen on cognition,
+    # which depends on BAG and age, can distort the correction; the run
+    # summary warns when correction fails to reduce BAG's age dependence.)
+    healthy = ((prevalent == 0) & (rng.random(n) < 0.7)).astype(int)
+    # ARIC's Jackson site recruited Black participants only; Forsyth a mix.
+    p_black = np.select([site == "Jackson", site == "Forsyth"], [1.0, 0.15], 0.0)
+    race = np.where(rng.random(n) < p_black, "Black", "White")
 
     df = pd.DataFrame(
         {
@@ -137,6 +153,8 @@ def generate_synthetic_cohort(
             schema.DEMENTIA_TIME_COL: np.round(dementia_time, 2),
             schema.DEMENTIA_EVENT_COL: dementia_event,
             schema.PREVALENT_DEMENTIA_COL: prevalent,
+            schema.REFERENCE_COL: healthy,
+            schema.RACE_COL: race,
         }
     )
 
@@ -145,6 +163,11 @@ def generate_synthetic_cohort(
     df = _inject_outliers(df, biomarker_cols, outlier_rate, rng)
     df = _inject_group_missing(df, group_missing_rate, rng)
     df = _inject_cell_missing(df, biomarker_cols, cell_missing_rate, rng)
+    df = _inject_cell_missing(df, [schema.TARGET_COL], bag_missing_rate, rng)
+    df.loc[df[schema.TARGET_COL].isna(), schema.BRAIN_AGE_COL] = np.nan
+    df = _inject_cell_missing(df, [schema.COGNITIVE_COL], outcome_missing_rate, rng)
+    lost = rng.random(n) < outcome_missing_rate
+    df.loc[lost, [schema.DEMENTIA_TIME_COL, schema.DEMENTIA_EVENT_COL]] = np.nan
     return df
 
 

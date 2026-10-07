@@ -1,10 +1,14 @@
-numpy>=1.24
-pandas>=2.0
-scikit-learn>=1.3
-pyyaml>=6.0
-# added as the project grows:
-xgboost>=2.0        # strong tabular baseline (RQ1/RQ2)
-# torch>=2.0          # small MLP + multi-task / continual-learning framings
-# shap>=0.44          # feature attribution (interrogation)
-# lifelines>=0.27     # C-index / time-to-event modelling (dementia outcome)
-# matplotlib>=3.7     # figures
+# Pipeline dependencies. Versions in the comments are the ones the full test
+# suite last passed with (Python 3.11, Windows); install those exact versions
+# on the analysis machine if anything behaves differently.
+numpy>=1.24            # 2.4.6
+pandas>=2.0            # 3.0.6
+scipy>=1.11            # 1.17.1
+scikit-learn>=1.3      # 1.9.1
+scikit-survival>=0.22  # 0.28.0  (Cox / gradient-boosted survival, C-index, Brier)
+xgboost>=2.0           # 3.2.0
+shap>=0.44             # 0.51.0
+pyyaml>=6.0            # 6.0.3
+# added later:
+# torch>=2.0          # multi-task / continual-learning framings (RQ3)
+# matplotlib>=3.7     # figures (made from the saved CSVs)

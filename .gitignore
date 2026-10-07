@@ -12,3 +12,6 @@ data/synthetic/*.csv
 .venv-linux/
 
 .venv-linux/
+
+# run outputs (regenerate with scripts.run_all)
+results/

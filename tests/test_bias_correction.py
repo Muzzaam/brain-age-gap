@@ -1,55 +1,64 @@
 """Tests for bias correction.  Run: python -m tests.test_bias_correction"""
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 import numpy as np
 
-from src.data import load_data, schema
-from src.preprocessing import prepare_data
-from src.evaluation.bias_correction import fit_bias_correction, correct_bag, age_bias
+from tests.helpers import cohort, run_tests
+from src.data import schema
+from src.evaluation.bias_correction import (fit_bias_correction, correct_bag, age_bias,
+                                            reference_mask, fit_on_reference)
+from src.experiment import bag_labels
 
 
-def _bag_and_age(n=1500, seed=42):
-    d = prepare_data(load_data(source="synthetic", n=n, seed=seed), seed=seed)
-    age_tr = d["train_df"][schema.AGE_COL].to_numpy(float)
-    age_te = d["test_df"][schema.AGE_COL].to_numpy(float)
-    return d["y_train"], age_tr, d["y_test"], age_te
+def _split(n=1500, seed=42, **kw):
+    c = cohort(n=n, seed=seed, **kw)
+    return c.iloc[: int(0.8 * len(c))], c.iloc[int(0.8 * len(c)):]
 
 
 def test_fit_returns_params():
-    bag_tr, age_tr, _, _ = _bag_and_age()
-    p = fit_bias_correction(bag_tr, age_tr)
+    tr, _ = _split()
+    p = fit_bias_correction(tr[schema.TARGET_COL], tr[schema.AGE_COL])
     assert "slope" in p and "intercept" in p
 
 
 def test_correction_zeroes_age_bias_in_sample():
-    # by the OLS residual property, fitting and applying on the same data leaves
-    # the corrected BAG uncorrelated with age.
-    bag_tr, age_tr, _, _ = _bag_and_age()
-    p = fit_bias_correction(bag_tr, age_tr)
-    corr = age_bias(correct_bag(bag_tr, age_tr, p), age_tr)
-    assert abs(corr) < 1e-3
+    # OLS residual property: fitting and applying on the same data leaves the
+    # corrected BAG uncorrelated with age
+    tr, _ = _split()
+    p = fit_bias_correction(tr[schema.TARGET_COL], tr[schema.AGE_COL])
+    assert abs(age_bias(correct_bag(tr[schema.TARGET_COL], tr[schema.AGE_COL], p), tr[schema.AGE_COL])) < 1e-3
 
 
 def test_correction_reduces_age_bias_out_of_sample():
-    bag_tr, age_tr, bag_te, age_te = _bag_and_age()
-    p = fit_bias_correction(bag_tr, age_tr)
-    before = abs(age_bias(bag_te, age_te))
-    after = abs(age_bias(correct_bag(bag_te, age_te, p), age_te))
-    assert after < before
+    tr, te = _split(bag_age_slope=-0.8)
+    y_tr, y_te, params = bag_labels(tr, te, "corrected", schema.REFERENCE_COL)
+    before = abs(age_bias(te[schema.TARGET_COL], te[schema.AGE_COL]))
+    after = abs(age_bias(y_te, te[schema.AGE_COL]))
+    assert after < before / 2, (before, after)
+
+
+def test_reference_subset_used_when_present():
+    tr, _ = _split()
+    mask, used = reference_mask(tr)
+    assert used == f"{schema.REFERENCE_COL} == 1"
+    assert mask.sum() == (tr[schema.REFERENCE_COL] == 1).sum() < len(tr)
+    assert fit_on_reference(tr)["n_reference"] == mask.sum()
+
+
+def test_reference_falls_back_to_all_training_rows():
+    tr, _ = _split()
+    mask, used = reference_mask(tr.drop(columns=[schema.REFERENCE_COL]))
+    assert used == "all training participants" and mask.all()
+
+
+def test_uncorrected_labels_are_untouched():
+    tr, te = _split()
+    y_tr, y_te, params = bag_labels(tr, te, "uncorrected", schema.REFERENCE_COL)
+    assert params is None and np.array_equal(y_te, te[schema.TARGET_COL].to_numpy())
 
 
 def test_age_bias_range():
-    bag_tr, age_tr, _, _ = _bag_and_age()
-    r = age_bias(bag_tr, age_tr)
-    assert -1.0 <= r <= 1.0
+    tr, _ = _split()
+    assert -1.0 <= age_bias(tr[schema.TARGET_COL], tr[schema.AGE_COL]) <= 1.0
 
 
 if __name__ == "__main__":
-    for nm, fn in list(globals().items()):
-        if nm.startswith("test_") and callable(fn):
-            fn()
-            print(f"PASSED {nm}")
+    run_tests(globals())

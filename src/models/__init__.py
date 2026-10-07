@@ -1,3 +1,4 @@
-from .estimators import build, MODEL_BUILDERS, PRINCIPAL_MODELS, Model
+from .estimators import make_pipeline, param_grid, MODEL_SPECS, PRINCIPAL_MODELS
+from .tuning import tune
 
-__all__ = ["build", "MODEL_BUILDERS", "PRINCIPAL_MODELS", "Model"]
+__all__ = ["make_pipeline", "param_grid", "MODEL_SPECS", "PRINCIPAL_MODELS", "tune"]

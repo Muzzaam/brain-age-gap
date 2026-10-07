@@ -6,51 +6,39 @@ Two families, mirroring the cognitive-outcome pairing:
   * survival_gbm -- gradient-boosted survival trees (the flexible analogue,
                     the survival counterpart of XGBoost)
 
-Both expose predict_risk (higher = higher dementia risk) and
-predict_survival_function (needed for the integrated Brier score).
+Each is a Pipeline(preprocess -> estimator) like the regression families, and
+tuned the same way. scikit-survival adds predict_survival_function to sklearn
+Pipelines, which the integrated Brier score needs.
 
-A small ridge penalty is added to the Cox model so it stays stable when the
-condition includes BAG, which is correlated with the biomarkers it came from.
+The ridge penalty (alpha) keeps the Cox model stable when the condition
+includes BAG, which is correlated with the biomarkers it came from.
 """
 
 from sksurv.linear_model import CoxPHSurvivalAnalysis
 from sksurv.ensemble import GradientBoostingSurvivalAnalysis
 
+from .estimators import make_pipeline as _make_pipeline, param_grid as _param_grid
+
 SEED = 42
 
+SURVIVAL_SPECS = {
+    "cox": (
+        lambda: CoxPHSurvivalAnalysis(),
+        {"alpha": [0.1, 1.0, 10.0]},
+    ),
+    "survival_gbm": (
+        lambda: GradientBoostingSurvivalAnalysis(subsample=0.8, learning_rate=0.05,
+                                                 random_state=SEED),
+        {"n_estimators": [100, 200], "max_depth": [2, 3]},
+    ),
+}
 
-class SurvivalModel:
-    def __init__(self, name, estimator):
-        self.name = name
-        self.estimator = estimator
-
-    def fit(self, X, y):
-        self.estimator.fit(X, y)
-        return self
-
-    def predict_risk(self, X):
-        return self.estimator.predict(X)
-
-    def predict_survival_function(self, X):
-        return self.estimator.predict_survival_function(X)
+SURVIVAL_MODELS = list(SURVIVAL_SPECS)
 
 
-def make_cox():
-    return SurvivalModel("cox", CoxPHSurvivalAnalysis(alpha=0.1))
+def make_survival_pipeline(name, columns):
+    return _make_pipeline(name, columns, specs=SURVIVAL_SPECS)
 
 
-def make_survival_gbm():
-    return SurvivalModel("survival_gbm", GradientBoostingSurvivalAnalysis(
-        n_estimators=200, max_depth=3, learning_rate=0.05,
-        subsample=0.8, random_state=SEED,
-    ))
-
-
-SURVIVAL_BUILDERS = {"cox": make_cox, "survival_gbm": make_survival_gbm}
-SURVIVAL_MODELS = ["cox", "survival_gbm"]
-
-
-def build_survival(name):
-    if name not in SURVIVAL_BUILDERS:
-        raise KeyError(f"Unknown survival model {name!r}. Available: {list(SURVIVAL_BUILDERS)}")
-    return SURVIVAL_BUILDERS[name]()
+def survival_param_grid(name, quick=False):
+    return _param_grid(name, specs=SURVIVAL_SPECS, quick=quick)

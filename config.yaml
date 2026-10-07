@@ -1,22 +1,54 @@
 # Central configuration. Edit here rather than in code.
+# Every script reads this file; command-line flags only override it.
 
 data:
   source: synthetic          # switch to "aric" when the real data arrives
-  aric_path: data/raw/aric_ncs.csv
+  aric:
+    tabular_path: data/raw/aric_ncs.csv      # ARIC-NCS visit 5 variables (csv, sas7bdat, dta, sav, parquet)
+    brain_age_path: data/raw/brain_age.csv   # participant_id, brain_age (output of the imaging step)
   synthetic:
-    n: 1500
+    n: 1900                  # roughly the size of the ARIC-NCS MRI subsample
     seed: 42
-    target_signal_fraction: 0.30   # ~upper bound on recoverable BAG R^2 (clean)
+    target_signal_fraction: 0.30   # ~upper bound on recoverable BAG R^2 from biomarkers (clean)
     cell_missing_rate: 0.05
     group_missing_rate: 0.02
     outlier_rate: 0.003
     prevalent_dementia_rate: 0.04
+    bag_missing_rate: 0.02         # scans that failed brain-age QC
+    outcome_missing_rate: 0.03     # missing cognitive score / dementia follow-up
     max_followup_years: 10.0
 
-split:
-  test_size: 0.2
-  val_size: 0.2
+features:
+  # Included in EVERY model (RQ1 baselines and all four RQ2 conditions), so that
+  # nothing can look useful just by standing in for age, sex or scanner site.
+  covariates: [age, sex, site]
+
+cv:
+  outer_folds: 5             # nested CV: outer folds give the reported mean +/- SD
+  repeats: 3                 # outer CV repeated with different shuffles (5 x 3 = 15 estimates)
+  inner_folds: 3             # inner CV: hyperparameter tuning and stage-1 cross-fitting
   seed: 42
 
+models:
+  rq1: [ridge, elastic_net, xgboost, mlp]
+  stage1: auto               # BAG estimator for RQ2; "auto" = best inner-CV R2 within each fold
+  stage2_cognitive: [ridge, elastic_net, xgboost, mlp]
+  stage2_dementia: [cox, survival_gbm]
+  shap: [ridge, xgboost, mlp]
+
+bias_correction:
+  # Every analysis is run once per variant and both are reported (sensitivity analysis).
+  variants: [uncorrected, corrected]
+  # Correction is fitted on training participants with reference_column == 1
+  # (e.g. cognitively normal). If the column is absent, all training participants are used.
+  reference_column: healthy_reference
+
 evaluation:
-  bag_r2_threshold: 0.20     # pre-registered "meaningful fidelity" threshold
+  bag_r2_threshold: 0.20     # pre-registered "meaningful fidelity" threshold (mean outer-fold R2)
+  alpha: 0.05
+
+reporting:
+  results_dir: results
+  min_cell_size: 10          # counts below this are suppressed in saved outputs
+  extra_subgroup_columns: [race]   # reported in the subgroup breakdown if present in the data
+  shap_max_explain: 200      # test rows explained per fold for the (slow) model-agnostic explainer

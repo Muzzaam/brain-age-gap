@@ -1,68 +1,43 @@
 """
-Cross-validation hyperparameter tuning for the BAG estimators (RQ1).
+Inner-loop cross-validated hyperparameter tuning.
 
-The benchmark's fixed model settings were reasonable defaults, but comparing
-model families on hand-picked settings risks measuring the settings, not the
-models. This tunes each family on a shared footing: a small grid searched by
-k-fold CV on the TRAINING split only (R2 scoring), so every family gets its best
-honest shot and the no-leakage discipline holds -- the test set is untouched
-until the final evaluation.
+Called inside each OUTER fold with that fold's training data only, so the
+outer test fold never influences which settings are chosen. This is the
+"nested" part of nested cross-validation: the outer loop estimates how well
+the whole procedure (tune, then fit) generalises; the inner loop does the
+tuning.
 
-Grids are deliberately small (this is an Honours-scale search, not exhaustive):
-enough to matter, cheap enough to run.
+Regression families are scored by R2; survival families by Harrell's C-index
+(scikit-survival's default score).
 """
 
-import numpy as np
-from sklearn.model_selection import GridSearchCV
-from sklearn.linear_model import Ridge, ElasticNet
-from sklearn.neural_network import MLPRegressor
-import xgboost as xgb
+from sklearn.model_selection import GridSearchCV, KFold
 
-SEED = 42
-CV_FOLDS = 5
-
-# (estimator factory, param grid) per family.
-PARAM_GRIDS = {
-    "ridge": (
-        lambda: Ridge(),
-        {"alpha": [0.1, 1.0, 10.0, 50.0]},
-    ),
-    "elastic_net": (
-        lambda: ElasticNet(max_iter=5000, random_state=SEED),
-        {"alpha": [0.01, 0.1, 1.0], "l1_ratio": [0.2, 0.5, 0.8]},
-    ),
-    "xgboost": (
-        lambda: xgb.XGBRegressor(random_state=SEED, n_jobs=-1),
-        {"n_estimators": [200, 400], "max_depth": [2, 3, 4],
-         "learning_rate": [0.03, 0.1], "subsample": [0.8]},
-    ),
-    "mlp": (
-        lambda: MLPRegressor(max_iter=1000, early_stopping=True, random_state=SEED),
-        {"hidden_layer_sizes": [(64,), (96, 64), (128, 64)], "alpha": [1e-4, 1e-3, 1e-2]},
-    ),
-}
+from .estimators import make_pipeline, param_grid
+from .survival import SURVIVAL_SPECS, make_survival_pipeline, survival_param_grid
 
 
-def tune_model(name, X_train, y_train, cv=CV_FOLDS):
+def inner_cv(n_folds, seed):
+    return KFold(n_splits=n_folds, shuffle=True, random_state=seed)
+
+
+def tune(name, X, y, columns, inner_folds=3, seed=42, quick=False):
     """
-    Grid-search one family on the training split. Returns best params, the mean
-    CV R2 of the best setting, and the refit best estimator.
+    Grid-search one family on (X, y) with inner K-fold CV and refit the best.
+
+    X is a DataFrame; only `columns` are used. Returns a dict with the fitted
+    best pipeline, its params, and its mean inner-CV score.
     """
-    factory, grid = PARAM_GRIDS[name]
-    search = GridSearchCV(
-        factory(), grid, scoring="r2", cv=cv, n_jobs=-1, refit=True,
-    )
-    search.fit(X_train, y_train)
+    survival = name in SURVIVAL_SPECS
+    pipe = make_survival_pipeline(name, columns) if survival else make_pipeline(name, columns)
+    grid = survival_param_grid(name, quick) if survival else param_grid(name, quick=quick)
+    search = GridSearchCV(pipe, grid, scoring=None if survival else "r2",
+                          cv=inner_cv(inner_folds, seed), n_jobs=-1, refit=True,
+                          error_score="raise")
+    search.fit(X[columns], y)
     return {
         "name": name,
-        "best_params": search.best_params_,
-        "cv_r2": float(search.best_score_),
         "estimator": search.best_estimator_,
+        "best_params": {k.split("__")[-1]: v for k, v in search.best_params_.items()},
+        "inner_cv_score": float(search.best_score_),
     }
-
-
-def tune_all(X_train, y_train, models=None, cv=CV_FOLDS):
-    """Tune each family and return {name: result} sorted by CV R2 (best first)."""
-    models = models or list(PARAM_GRIDS)
-    results = {m: tune_model(m, X_train, y_train, cv=cv) for m in models}
-    return dict(sorted(results.items(), key=lambda kv: kv[1]["cv_r2"], reverse=True))

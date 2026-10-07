@@ -33,6 +33,18 @@ DEMENTIA_TIME_COL = "dementia_time"      # time-to-event / censoring from imagin
 DEMENTIA_EVENT_COL = "dementia_event"    # 1 = incident dementia, 0 = censored
 PREVALENT_DEMENTIA_COL = "prevalent_dementia"  # 1 = dementia already present at imaging visit (excluded)
 
+# --- optional columns (used when present, never required) --------------------
+REFERENCE_COL = "healthy_reference"   # 1 = in the healthy reference set for bias correction
+RACE_COL = "race"                     # subgroup reporting only; never a model input
+
+# --- derived columns (added by preprocessing, not by loaders) ----------------
+SEX_MALE_COL = "sex_male"             # numeric encoding of SEX_COL: M = 1, F = 0
+
+# Covariate names in config.yaml -> model input columns. Covariates go into
+# every model so nothing can look useful just by standing in for them.
+COVARIATE_COLUMNS = {"age": AGE_COL, "sex": SEX_MALE_COL, "site": SITE_COL}
+CATEGORICAL_COLUMNS = [SITE_COL]      # one-hot encoded; everything else is numeric
+
 
 # --- convenience accessors ---------------------------------------------------
 def all_biomarker_columns():

@@ -7,9 +7,9 @@ Metrics for the incident-dementia outcome (RQ2, time-to-event).
                               curves, averaged over time. Lower is better;
                               0.25 is uninformative.
 
-C-index isn't a per-participant quantity, so the "does BAG help?" comparison
-can't use a paired Wilcoxon like the cognitive outcome. Instead we bootstrap the
-test set and look at the distribution of the C-index difference.
+Differences between conditions are tested across CV folds with the corrected
+resampled t-test (src/evaluation/stats.py). DeLong's test, named in the
+proposal, applies to binary AUCs, not to censored C-indices, so it is not used.
 """
 
 import numpy as np
@@ -56,42 +56,3 @@ def integrated_brier(y_train, y_test, model, X_test, n_times=10):
     surv_funcs = model.predict_survival_function(X_test)
     preds = np.asarray([[fn(t) for t in grid] for fn in surv_funcs])
     return float(integrated_brier_score(y_train, y_test, preds, grid))
-
-
-def bootstrap_cindex_difference(events, times, risk_base, risk_aug, n_boot=500, seed=42):
-    """
-    Bootstrap the C-index difference (augmented - baseline) on the test set.
-
-    Returns the mean difference, a 95% CI, and p_no_improve = the fraction of
-    resamples where BAG did NOT help (delta <= 0). Small p_no_improve + a CI
-    above 0 means BAG genuinely improves discrimination.
-    """
-    rng = np.random.default_rng(seed)
-    events = np.asarray(events).astype(bool)
-    times = np.asarray(times, float)
-    risk_base = np.asarray(risk_base, float)
-    risk_aug = np.asarray(risk_aug, float)
-    n = len(times)
-
-    deltas = []
-    for _ in range(n_boot):
-        idx = rng.integers(0, n, n)
-        if events[idx].sum() < 2:      # need comparable pairs
-            continue
-        try:
-            cb = concordance_index_censored(events[idx], times[idx], risk_base[idx])[0]
-            ca = concordance_index_censored(events[idx], times[idx], risk_aug[idx])[0]
-        except Exception:              # degenerate resample
-            continue
-        deltas.append(ca - cb)
-
-    deltas = np.asarray(deltas)
-    if deltas.size == 0:
-        return {"delta_mean": float("nan"), "ci_low": float("nan"),
-                "ci_high": float("nan"), "p_no_improve": float("nan")}
-    return {
-        "delta_mean": float(deltas.mean()),
-        "ci_low": float(np.percentile(deltas, 2.5)),
-        "ci_high": float(np.percentile(deltas, 97.5)),
-        "p_no_improve": float(np.mean(deltas <= 0)),
-    }

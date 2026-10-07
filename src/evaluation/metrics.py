@@ -33,15 +33,3 @@ def meets_threshold(r2, threshold=BAG_R2_THRESHOLD):
     """Does this R2 clear the pre-registered meaningful-fidelity bar?"""
     return r2 >= threshold
 
-
-def format_metrics_table(results):
-    """Pretty-print a name -> metrics dict as an aligned table.
-
-    `results` is like {"xgboost": {"MAE":.., "RMSE":.., "R2":..}, ...}.
-    """
-    lines = [f"{'model':<14}{'MAE':>8}{'RMSE':>8}{'R2':>8}  {'>=0.20':>7}"]
-    lines.append("-" * 47)
-    for name, m in results.items():
-        flag = "yes" if meets_threshold(m["R2"]) else "no"
-        lines.append(f"{name:<14}{m['MAE']:>8.3f}{m['RMSE']:>8.3f}{m['R2']:>8.3f}  {flag:>7}")
-    return "\n".join(lines)

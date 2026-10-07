@@ -6,7 +6,7 @@ import traceback
 import warnings
 
 SUITES = ["test_pipeline", "test_models", "test_stats", "test_bias_correction", "test_survival",
-          "test_interpretation", "test_two_stage", "test_run_all"]
+          "test_interpretation", "test_two_stage", "test_neural", "test_run_all"]
 
 warnings.filterwarnings("ignore")
 failed = 0

@@ -17,8 +17,9 @@ directly (`.venv\Scripts\python.exe -m ...`).
 pip install -r requirements.txt
 python -m tests                      # full test suite (~1 minute)
 python -m scripts.run_all --quick    # smoke test of every analysis (~30 s)
-python -m scripts.run_all            # the real thing (~30 min on 12 threads)
-python -m scripts.run_all --only rq1 # a subset: rq1, rq2_cognitive, rq2_dementia
+python -m scripts.run_all            # the real thing (see run time below)
+python -m scripts.run_all --only rq1 # a subset: rq1, rq2_cognitive, rq2_dementia,
+                                     #           rq3_cognitive, rq3_dementia
 ```
 
 Each run writes `results/<timestamp>_<source>/`: CSV tables, `summary.txt`,
@@ -59,6 +60,15 @@ so they are as noisy as test-set estimates (`src/models/two_stage.py`).
 **Four RQ2 conditions:** covariates; covariates + biomarkers; + estimated BAG;
 + placebo (BAG shuffled: same distribution, signal destroyed).
 
+**RQ3 framings** (`src/models/neural.py`, `framings.py`). One PyTorch network and
+training routine for every framing, so only the role of BAG differs: `baseline`
+(no BAG, equivalent capacity), `two_stage` (estimated BAG as an input),
+`multitask` (auxiliary BAG head, loss weight tuned), `multitask_placebo`
+(auxiliary head on shuffled BAG), `bottleneck` (the BAG scalar feeds the outcome
+head; `bottleneck_ablated` zeroes it at test time), `transfer` (pretrain on BAG,
+fine-tune on the outcome). Both outcomes: MSE for cognition, Cox partial
+likelihood for dementia.
+
 **Bias correction is a sensitivity analysis.** Every analysis runs on uncorrected
 and corrected BAG (linear age-residualisation fitted on the training fold's
 healthy-reference subset) and both are reported.
@@ -82,8 +92,10 @@ src/
     survival.py       Cox and gradient-boosted survival pipelines + grids
     tuning.py         inner-CV grid search
     two_stage.py      RQ2 conditions, stage-1 cross-fitting, placebo
+    neural.py         RQ3 PyTorch network + sklearn-compatible estimator, Cox loss
+    framings.py       RQ3 framing registry and tuning grids
   evaluation/         metrics, stats (corrected t-test), bias correction, SHAP/subgroups, residuals
-  experiment.py       the nested-CV engine running RQ1 and RQ2
+  experiment.py       the nested-CV engine running RQ1, RQ2 and RQ3
   reporting.py        writes aggregate tables + summary
 scripts/
   run_all.py          run everything, save results
@@ -91,4 +103,5 @@ scripts/
   generate_data.py    save + describe the synthetic cohort
 tests/                python -m tests runs all suites
 imaging/              brain-age labelling runners (run in WSL)
+docs/                 notes, e.g. aric_dataset_notes.md
 ```

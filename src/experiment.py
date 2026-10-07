@@ -20,6 +20,9 @@ Within each outer fold, for each bias-correction variant of the BAG labels:
   RQ2   stage 1 = the chosen BAG estimator, cross-fitted; stage 2 = every
         outcome model x the four conditions, for the cognitive score and for
         incident dementia.
+  RQ3   the neural framings (src/models/framings.py) on both outcomes: one
+        network, BAG entering as nothing / an input / an auxiliary head / a
+        bottleneck / a pretraining task, plus the bottleneck ablation.
 
 All analyses share the same folds, so comparisons between them are paired.
 Only aggregate results leave this module; participant-level predictions are
@@ -35,7 +38,9 @@ from sklearn.metrics import r2_score
 
 from .data import schema
 from .preprocessing import prepare_cohort, covariate_columns, outer_folds
-from .models.tuning import tune
+from .models.tuning import tune, tune_framing
+from .models.framings import RQ3_FRAMINGS, LABEL_FREE
+from .models.neural import make_targets
 from .models.two_stage import (CONDITIONS, condition_columns, cross_fit_bag,
                                add_bag_features)
 from .evaluation.metrics import bag_metrics
@@ -47,7 +52,8 @@ from .evaluation.diagnostics import residual_analysis
 from .evaluation.stats import summarize, compare, add_holm
 
 PRIMARY_SET = "covariates+biomarkers"
-ALL_PARTS = ("rq1", "rq2_cognitive", "rq2_dementia")
+ALL_PARTS = ("rq1", "rq2_cognitive", "rq2_dementia", "rq3_cognitive", "rq3_dementia")
+RQ2_PARTS = ("rq2_cognitive", "rq2_dementia", "rq3_cognitive", "rq3_dementia")  # need stage 1
 
 
 def rq1_feature_sets(covariates):
@@ -88,7 +94,7 @@ def run_experiment(df_raw, cfg, parts=ALL_PARTS, log=print):
     ref_col = cfg["bias_correction"].get("reference_column")
     rep = cfg["reporting"]
     do_rq1 = "rq1" in parts
-    do_rq2 = any(p in parts for p in ("rq2_cognitive", "rq2_dementia"))
+    do_rq2 = any(p in parts for p in RQ2_PARTS)
 
     sets = rq1_feature_sets(cov)
     if not do_rq1:  # RQ2 still needs the primary set for stage 1
@@ -98,7 +104,8 @@ def run_experiment(df_raw, cfg, parts=ALL_PARTS, log=print):
     log(f"Analysis cohort: {len(cohort)} participants. Nested CV: {R} x {K}-fold outer, "
         f"{inner}-fold inner. Variants: {variants}. Parts: {list(parts)}.")
 
-    rows = {k: [] for k in ("rq1", "shap", "bias", "stage1", "rq2_cognitive", "rq2_dementia")}
+    rows = {k: [] for k in ("rq1", "shap", "bias", "stage1", "rq2_cognitive", "rq2_dementia",
+                            "rq3_cognitive", "rq3_dementia")}
     n = len(cohort)
     oof_true = {v: np.full(n, np.nan) for v in variants}
     oof_pred = {}
@@ -207,12 +214,77 @@ def run_experiment(df_raw, cfg, parts=ALL_PARTS, log=print):
                                                      "n_train": int(mtr.sum()), "n_test": int(mte.sum()),
                                                      "n_events_test": int(yte["event"].sum()), **out})
 
+            # ---------------- RQ3 framings ----------------
+            for task, part in (("regression", "rq3_cognitive"), ("survival", "rq3_dementia")):
+                if part in parts:
+                    rows[part] += _rq3_fold(task, tr2, te2, y_tr, y_te, cov, cfg, fseed, cache, vb)
+
         log(f"  repeat {r + 1}/{R}, fold {k + 1}/{K} done in {time.time() - tf:.0f}s")
 
     results = _assemble(rows, flow, cohort, oof_true, oof_pred, cfg, parts)
     results["_meta"] = {"n_cohort": len(cohort), "seconds": round(time.time() - t0, 1),
                         "parts": list(parts)}
     return results
+
+
+def _rq3_fold(task, tr2, te2, bag_tr, bag_te, cov, cfg, fseed, cache, vb):
+    """All RQ3 framings for one outcome in one outer fold and BAG variant."""
+    from .models.two_stage import BAG_HAT_COL
+    inner, quick = cfg["cv"]["inner_folds"], cfg.get("quick", False)
+    neural_cfg = cfg.get("neural", {})
+    base_cols = list(cov) + schema.all_biomarker_columns()
+    if task == "regression":
+        mtr = tr2[schema.COGNITIVE_COL].notna().to_numpy()
+        mte = te2[schema.COGNITIVE_COL].notna().to_numpy()
+        ytr = make_targets(task, bag_tr[mtr], outcome=tr2[schema.COGNITIVE_COL][mtr])
+    else:
+        ok = lambda f: (f[schema.DEMENTIA_TIME_COL].notna() & f[schema.DEMENTIA_EVENT_COL].notna()).to_numpy()
+        mtr, mte = ok(tr2), ok(te2)
+        ytr = make_targets(task, bag_tr[mtr], event=tr2[schema.DEMENTIA_EVENT_COL][mtr],
+                           time=tr2[schema.DEMENTIA_TIME_COL][mtr])
+        ys_tr = make_survival_target(tr2[schema.DEMENTIA_EVENT_COL][mtr].astype(int),
+                                     tr2[schema.DEMENTIA_TIME_COL][mtr])
+        ys_te = make_survival_target(te2[schema.DEMENTIA_EVENT_COL][mte].astype(int),
+                                     te2[schema.DEMENTIA_TIME_COL][mte])
+    Xtr, Xte = tr2[mtr], te2[mte]
+
+    def _metrics(pred):
+        if task == "regression":
+            return cognitive_metrics(Xte[schema.COGNITIVE_COL].to_numpy(float), pred)
+        return {"C_index": concordance(ys_te["event"], ys_te["time"], pred)}
+
+    rows = []
+    for name in cfg["models"].get("rq3_framings", list(RQ3_FRAMINGS)):
+        kind, uses_bag_hat, placebo = RQ3_FRAMINGS[name]
+        cols = base_cols + [BAG_HAT_COL] if uses_bag_hat else base_cols
+        key = ("rq3", task, name)
+        if name in LABEL_FREE and key in cache:
+            outs = cache[key]
+        else:
+            y = ytr.copy()
+            if placebo:  # auxiliary task with BAG's distribution but no link to the person
+                rng = np.random.default_rng(fseed)
+                if task == "regression":
+                    y[:, 1] = rng.permutation(y[:, 1])
+                else:
+                    y["bag"] = rng.permutation(y["bag"])
+            res = tune_framing(name, task, Xtr, y, cols, inner, fseed, quick, neural_cfg)
+            pipe = res["estimator"]
+            out = _metrics(pipe.predict(Xte[cols]))
+            if task == "survival":
+                out["IBS"] = integrated_brier(ys_tr, ys_te, pipe, Xte[cols])
+            Xt = pipe[:-1].transform(Xte[cols])
+            if kind != "single" and not placebo:  # how well did the network learn BAG?
+                out["bag_head_R2"] = float(r2_score(bag_te[mte], pipe[-1].predict_bag(Xt)))
+            out["best_params"] = json.dumps(res["best_params"], default=str)
+            outs = [(name, out)]
+            if kind == "bottleneck":  # same fitted model, BAG scalar zeroed at test time
+                abl = _metrics(pipe[-1].predict(Xt, ablate=True))
+                outs.append(("bottleneck_ablated", {**abl, "best_params": out["best_params"]}))
+            cache[key] = outs
+        for fname, out in outs:
+            rows.append({**vb, "framing": fname, "n_train": int(mtr.sum()), "n_test": int(mte.sum()), **out})
+    return rows
 
 
 def _assemble(rows, flow, cohort, oof_true, oof_pred, cfg, parts):
@@ -277,5 +349,25 @@ def _assemble(rows, flow, cohort, oof_true, oof_pred, cfg, parts):
                 if metric == "Pearson_r":
                     continue
                 comps += compare(f, ["variant", "model"], "condition", a, b, metric, higher, alpha)
+        out[f"{part}_comparisons"] = add_holm(pd.DataFrame(comps))
+
+    for part, metrics in (("rq3_cognitive", {"RMSE": False, "R2": True}),
+                          ("rq3_dementia", {"C_index": True, "IBS": False})):
+        if part not in parts or not rows[part]:
+            continue
+        f = pd.DataFrame(rows[part])
+        out[f"{part}_folds"] = f
+        extra = [m for m in ("Pearson_r", "bag_head_R2") if m in f.columns]
+        out[f"{part}_summary"] = summarize(f, ["variant", "framing"], list(metrics) + extra)
+        present = set(f["framing"])
+        pairs = [(n, "baseline") for n in RQ3_FRAMINGS if n != "baseline"]
+        pairs += [("multitask", "multitask_placebo"), ("bottleneck", "bottleneck_ablated")]
+        comps = []
+        for a, b in pairs:
+            if a in present and b in present:
+                for metric, higher in metrics.items():
+                    has = lambda lvl: f.loc[f["framing"] == lvl, metric].notna().any()
+                    if metric in f.columns and has(a) and has(b):
+                        comps += compare(f, ["variant"], "framing", a, b, metric, higher, alpha)
         out[f"{part}_comparisons"] = add_holm(pd.DataFrame(comps))
     return out

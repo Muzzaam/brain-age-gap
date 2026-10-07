@@ -35,6 +35,19 @@ models:
   stage2_cognitive: [ridge, elastic_net, xgboost, mlp]
   stage2_dementia: [cox, survival_gbm]
   shap: [ridge, xgboost, mlp]
+  # RQ3: how BAG enters a neural downstream model (src/models/framings.py)
+  rq3_framings: [baseline, two_stage, multitask, multitask_placebo, bottleneck, transfer]
+
+neural:
+  # One network for every RQ3 framing: 2 hidden layers within the proposal's 64-128
+  # range, ReLU + dropout, Adam, early stopping on a 15% validation split.
+  # weight decay (and the BAG loss weight, for multitask/bottleneck) are tuned by inner CV.
+  hidden: [128, 64]
+  dropout: 0.2
+  lr: 0.003
+  max_epochs: 1000
+  patience: 30
+  finetune_lr_factor: 0.1    # transfer framing: encoder learning rate during fine-tuning
 
 bias_correction:
   # Every analysis is run once per variant and both are reported (sensitivity analysis).

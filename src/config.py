@@ -18,6 +18,7 @@ QUICK_OVERRIDES = {
     "cv": {"outer_folds": 2, "repeats": 1, "inner_folds": 2},
     "models": {"rq1": ["ridge", "xgboost"], "stage2_cognitive": ["ridge", "xgboost"],
                "stage2_dementia": ["cox"], "shap": ["ridge", "xgboost"]},
+    "neural": {"max_epochs": 60, "patience": 10},
     "quick": True,
 }
 

@@ -146,6 +146,25 @@ def summary_text(results, cfg):
                 L.append(f"    {row.comparison:<62}{row.metric:<8} improvement {row.improvement:+.4f} "
                          f"[{row.ci_low:+.4f}, {row.ci_high:+.4f}] p={row.p:.3f} p_holm={row.p_holm:.3f}"
                          f"{'  *' if row.significant else ''}")
+    for part, label, metrics in (("rq3_cognitive", "cognitive score", ["RMSE", "R2"]),
+                                 ("rq3_dementia", "incident dementia", ["C_index", "IBS"])):
+        if f"{part}_summary" not in results:
+            continue
+        s = results[f"{part}_summary"]
+        for variant, g in s.groupby("variant", sort=False):
+            extra = ["bag_head_R2"] if "bag_head_R2_mean" in g else []
+            L += ["", f"RQ3  {label}, neural framings  [{variant} BAG]",
+                  f"  {'framing':<22}" + "".join(f"{x:>18}" for x in metrics + extra)]
+            for row in g.itertuples(index=False):
+                L.append(f"  {row.framing:<22}" + "".join(
+                    f"{_fmt(getattr(row, x + '_mean'), getattr(row, x + '_sd')):>18}"
+                    if np.isfinite(getattr(row, x + "_mean")) else f"{'-':>18}"
+                    for x in metrics + extra))
+            c = results[f"{part}_comparisons"]
+            for row in c[c["variant"] == variant].itertuples(index=False):
+                L.append(f"    {row.comparison:<40}{row.metric:<8} improvement {row.improvement:+.4f} "
+                         f"[{row.ci_low:+.4f}, {row.ci_high:+.4f}] p={row.p:.3f} p_holm={row.p_holm:.3f}"
+                         f"{'  *' if row.significant else ''}")
     L += ["", "Improvement > 0 means the first condition is better. * = p < "
               f"{cfg['evaluation']['alpha']} (corrected resampled t-test, unadjusted). p_holm is "
               "Holm-adjusted over all comparisons for that outcome and BAG variant."]

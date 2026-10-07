@@ -94,5 +94,29 @@ def test_aric_loader_joins_brain_age():
     assert np.isnan(out[schema.TARGET_COL].iloc[49])      # failed scan -> missing BAG, not dropped
 
 
+def test_linkage_with_scan_id_map_and_report():
+    df = load_data(source="synthetic", n=40, seed=4).drop(columns=[schema.BRAIN_AGE_COL])
+    ids = df[schema.ID_COL].tolist()
+    ba = pd.DataFrame({schema.ID_COL: [f"IMG{i}" for i in range(42)],     # imaging ids, 2 orphans
+                       schema.BRAIN_AGE_COL: 75.0, "status": ["ok"] * 41 + ["failed: X"]})
+    id_map = pd.DataFrame({"scan_id": [f"IMG{i}" for i in range(40)], schema.ID_COL: ids})
+    out = loader.link_brain_age(df, ba, id_map)
+    rep = out.attrs["linkage"]
+    assert rep["scans_failed"] == 1 and rep["scans_not_in_id_map"] == 1
+    assert rep["participants_with_brain_age"] == 40
+    assert out.set_index(schema.ID_COL).loc[ids[3], schema.BRAIN_AGE_COL] == 75.0
+
+
+def test_linkage_rejects_two_scans_for_one_participant():
+    df = load_data(source="synthetic", n=10, seed=4)
+    pid = df[schema.ID_COL].iloc[0]
+    ba = pd.DataFrame({schema.ID_COL: [pid, pid], schema.BRAIN_AGE_COL: [70.0, 71.0]})
+    try:
+        loader.link_brain_age(df, ba)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for duplicate scans")
+
+
 if __name__ == "__main__":
     run_tests(globals())

@@ -20,7 +20,7 @@ from . import schema
 from .synthetic import generate_synthetic_cohort
 
 
-def load_data(source="synthetic", path=None, brain_age_path=None, **kwargs):
+def load_data(source="synthetic", path=None, brain_age_path=None, scan_id_map_path=None, **kwargs):
     """
     Load a cohort dataframe conforming to schema.REQUIRED_COLUMNS.
 
@@ -34,13 +34,16 @@ def load_data(source="synthetic", path=None, brain_age_path=None, **kwargs):
     brain_age_path : str, optional
         Path to the brain-age CSV from the imaging step. If omitted, the
         tabular file must already contain brain_age or bag.
+    scan_id_map_path : str, optional
+        CSV with columns scan_id, participant_id, for when scan filenames carry
+        an imaging id rather than the ARIC participant id.
     """
     if source == "synthetic":
         df = generate_synthetic_cohort(**kwargs)
     elif source == "aric":
         if path is None:
             raise ValueError("path is required when source='aric'.")
-        df = _load_aric(path, brain_age_path)
+        df = _load_aric(path, brain_age_path, scan_id_map_path)
     else:
         raise ValueError(f"Unknown source: {source!r}")
 
@@ -67,7 +70,12 @@ def load_from_config(cfg):
         raise FileNotFoundError(
             f"Brain-age file not found at {ba}. Run the imaging step first, or "
             f"set data.aric.brain_age_path to null if the tabular file has brain_age.")
-    return load_data("aric", path=str(tab), brain_age_path=str(ba) if ba else None)
+    mp = aric.get("scan_id_map_path")
+    mp = resolve_path(mp) if mp else None
+    if mp is not None and not mp.exists():
+        raise FileNotFoundError(f"Scan id map not found at {mp} (data.aric.scan_id_map_path).")
+    return load_data("aric", path=str(tab), brain_age_path=str(ba) if ba else None,
+                     scan_id_map_path=str(mp) if mp else None)
 
 
 # Fill this in when the real data lands. The keys are the ARIC column names as
@@ -96,7 +104,7 @@ def _read_any(path):
     return readers[ext](path)
 
 
-def _load_aric(path, brain_age_path=None):
+def _load_aric(path, brain_age_path=None, scan_id_map_path=None):
     """
     Load and normalise the real ARIC-NCS dataset onto our schema.
 
@@ -114,21 +122,51 @@ def _load_aric(path, brain_age_path=None):
     #   * healthy_reference (e.g. adjudicated cognitively normal at visit 5)
 
     if brain_age_path is not None:
-        ba = pd.read_csv(brain_age_path)
-        if "status" in ba.columns:          # the imaging batch runners write a status column
-            ba = ba[ba["status"] == "ok"]
-        ba = ba[[schema.ID_COL, schema.BRAIN_AGE_COL]]
-        if ba[schema.ID_COL].duplicated().any():
-            raise ValueError("Brain-age file has duplicate participant ids.")
-        df[schema.ID_COL] = df[schema.ID_COL].astype(str)
-        ba[schema.ID_COL] = ba[schema.ID_COL].astype(str)
-        # left join: participants without a usable scan keep NaN brain_age and
-        # are counted (then excluded) in the participant flow, not silently lost
-        df = df.drop(columns=[schema.BRAIN_AGE_COL], errors="ignore").merge(
-            ba, on=schema.ID_COL, how="left")
+        id_map = pd.read_csv(scan_id_map_path) if scan_id_map_path else None
+        df = link_brain_age(df, pd.read_csv(brain_age_path), id_map)
 
     if schema.TARGET_COL not in df.columns and schema.BRAIN_AGE_COL in df.columns:
         df[schema.TARGET_COL] = df[schema.BRAIN_AGE_COL] - df[schema.AGE_COL]
+    return df
+
+
+def link_brain_age(df, ba, id_map=None):
+    """
+    Join the imaging step's brain ages onto the tabular data by participant id.
+
+    `ba` is the runner's CSV (participant_id, brain_age, status). If scan
+    filenames carried an imaging id, `id_map` (scan_id, participant_id)
+    translates it first. Participants without a usable scan keep NaN
+    brain_age and are counted, then excluded, in the participant flow.
+    The counts of the match are stored in df.attrs["linkage"] for preflight.
+    """
+    ba = ba.copy()
+    ba[schema.ID_COL] = ba[schema.ID_COL].astype(str).str.strip()
+    report = {"brain_age_rows": len(ba)}
+    if "status" in ba.columns:  # the imaging batch runners write a status column
+        report["scans_failed"] = int((ba["status"] != "ok").sum())
+        ba = ba[ba["status"] == "ok"]
+    if id_map is not None:
+        id_map = id_map.astype(str).apply(lambda s: s.str.strip())
+        if id_map["scan_id"].duplicated().any():
+            raise ValueError("Scan id map has duplicate scan_id values.")
+        lookup = dict(zip(id_map["scan_id"], id_map[schema.ID_COL]))
+        report["scans_not_in_id_map"] = int((~ba[schema.ID_COL].isin(lookup)).sum())
+        ba[schema.ID_COL] = ba[schema.ID_COL].map(lookup)
+        ba = ba[ba[schema.ID_COL].notna()]
+    if ba[schema.ID_COL].duplicated().any():
+        raise ValueError("More than one usable brain age for some participants; keep one scan each.")
+
+    df = df.copy()
+    df[schema.ID_COL] = df[schema.ID_COL].astype(str).str.strip()
+    known = set(df[schema.ID_COL])
+    report["scans_usable"] = len(ba)
+    report["scans_matched_to_participant"] = int(ba[schema.ID_COL].isin(known).sum())
+    report["scans_with_no_participant"] = len(ba) - report["scans_matched_to_participant"]
+    df = df.drop(columns=[schema.BRAIN_AGE_COL], errors="ignore").merge(
+        ba[[schema.ID_COL, schema.BRAIN_AGE_COL]], on=schema.ID_COL, how="left")
+    report["participants_with_brain_age"] = int(df[schema.BRAIN_AGE_COL].notna().sum())
+    df.attrs["linkage"] = report
     return df
 
 

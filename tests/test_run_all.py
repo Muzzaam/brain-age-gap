@@ -74,5 +74,14 @@ def test_preflight_catches_bad_codings_and_missing_columns():
     assert n_err >= 1 and any("grip_strength" in l for l in lines)
 
 
+def test_preflight_flags_scrambled_scan_linkage():
+    # if scans are attached to the wrong people, brain age stops tracking age
+    df = load_data(source="synthetic", n=800, seed=0)
+    ba = df[schema.BRAIN_AGE_COL].sample(frac=1, random_state=1).to_numpy()
+    bad = df.assign(**{schema.BRAIN_AGE_COL: ba, schema.TARGET_COL: ba - df[schema.AGE_COL]})
+    lines, _, n_err = preflight.check(bad, quick_cfg())
+    assert n_err >= 1 and any("wrong participants" in l for l in lines), lines
+
+
 if __name__ == "__main__":
     run_tests(globals())

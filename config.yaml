@@ -6,6 +6,7 @@ data:
   aric:
     tabular_path: data/raw/aric_ncs.csv      # ARIC-NCS visit 5 variables (csv, sas7bdat, dta, sav, parquet)
     brain_age_path: data/raw/brain_age.csv   # participant_id, brain_age (output of the imaging step)
+    scan_id_map_path: null                   # optional CSV (scan_id, participant_id) if scan names are not ARIC ids
   synthetic:
     n: 1900                  # roughly the size of the ARIC-NCS MRI subsample
     seed: 42

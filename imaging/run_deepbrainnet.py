@@ -22,17 +22,32 @@ Examples
 
     # batch a whole folder
     python run_deepbrainnet.py --input /mnt/d/aric/t1 --output-dir ./dbn_out
+
+    # files named like "scan_A123456_T1.nii.gz": pull the participant id out
+    python run_deepbrainnet.py --input /mnt/d/aric/t1 --id-regex "(A\\d{6})"
+
+If filenames carry an imaging id rather than the ARIC participant id, leave
+them as they are and give the loader a mapping file instead
+(data.aric.scan_id_map_path in config.yaml).
 """
 
 import argparse
 import csv
+import re
 import sys
 import time
 from pathlib import Path
 
 
-def subject_id(scan_path):
+def subject_id(scan_path, id_regex=None):
+    """Participant (or scan) id from a filename: the extension stripped, or
+    the first capture group of id_regex if one is given."""
     name = Path(scan_path).name
+    if id_regex:
+        m = re.search(id_regex, name)
+        if not m:
+            raise ValueError(f"--id-regex {id_regex!r} does not match {name!r}")
+        return m.group(1) if m.groups() else m.group(0)
     for ext in (".nii.gz", ".nii"):
         if name.endswith(ext):
             return name[: -len(ext)]
@@ -62,6 +77,8 @@ def main():
     ap.add_argument("--input", required=True, help="a single T1 scan, or a folder of them")
     ap.add_argument("--pattern", default="*.nii*", help="glob when --input is a folder")
     ap.add_argument("--output-dir", default="./dbn_out", help="where batch results go")
+    ap.add_argument("--id-regex", default=None,
+                    help="regex whose first group is the id inside each filename")
     args = ap.parse_args()
 
     # Imported here so --help works without the heavy deps installed.
@@ -98,28 +115,35 @@ def main():
     if not scans:
         sys.exit(f"No scans matching {args.pattern!r} in {in_path}")
 
+    ids = [subject_id(s, args.id_regex) for s in scans]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        sys.exit(f"{len(dupes)} ids have more than one scan (e.g. {dupes[:3]}). "
+                 f"Keep one T1 per participant before running the batch.")
     done = load_done(manifest)
-    todo = [s for s in scans if subject_id(s) not in done]
+    todo = [s for s in scans if subject_id(s, args.id_regex) not in done]
     print(f"Found {len(scans)} scans; {len(done)} already done; {len(todo)} to process.\n")
 
     write_header = not manifest.exists()
     ok = fail = 0
     with open(manifest, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["participant_id", "brain_age", "status", "seconds"])
+        w = csv.DictWriter(f, fieldnames=["participant_id", "brain_age", "status", "seconds",
+                                          "scan_file"])
         if write_header:
             w.writeheader()
         for i, scan in enumerate(todo, 1):
-            pid = subject_id(scan)
+            pid = subject_id(scan, args.id_regex)
             start = time.time()
             try:
                 age = predict_one(scan, ants, antspynet)
                 rec = {"participant_id": pid, "brain_age": round(age, 2),
-                       "status": "ok", "seconds": round(time.time() - start, 1)}
+                       "status": "ok", "seconds": round(time.time() - start, 1),
+                       "scan_file": scan.name}
                 ok += 1
             except Exception as e:  # noqa: BLE001 - log and continue the batch
                 rec = {"participant_id": pid, "brain_age": "",
                        "status": f"failed: {type(e).__name__}",
-                       "seconds": round(time.time() - start, 1)}
+                       "seconds": round(time.time() - start, 1), "scan_file": scan.name}
                 fail += 1
             w.writerow(rec)
             f.flush()  # persist after every scan so a crash loses nothing

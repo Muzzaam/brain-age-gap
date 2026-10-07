@@ -33,7 +33,9 @@ def _load_unvalidated(cfg):
         return loader.generate_synthetic_cohort(**cfg["data"]["synthetic"])
     a = cfg["data"]["aric"]
     ba = resolve_path(a["brain_age_path"]) if a.get("brain_age_path") else None
-    return loader._load_aric(str(resolve_path(a["tabular_path"])), str(ba) if ba else None)
+    mp = resolve_path(a["scan_id_map_path"]) if a.get("scan_id_map_path") else None
+    return loader._load_aric(str(resolve_path(a["tabular_path"])), str(ba) if ba else None,
+                             str(mp) if mp else None)
 
 
 def check(df, cfg):
@@ -100,6 +102,28 @@ def check(df, cfg):
     if "n_implausible" in table:
         table = suppress_small(table.rename(columns={"n_implausible": "n"}), "n", min_cell) \
             .rename(columns={"n": "n_implausible"})
+
+    # scan-to-participant linkage
+    link = df.attrs.get("linkage")
+    if link:
+        L.append("Scan linkage: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in link.items()))
+        if link.get("scans_with_no_participant", 0) or link.get("scans_not_in_id_map", 0):
+            warn("some usable scans did not match any participant; check the id format "
+                 "(--id-regex in the imaging runner, or data.aric.scan_id_map_path)")
+        if link["scans_usable"] and link["scans_matched_to_participant"] < 0.9 * link["scans_usable"]:
+            err("fewer than 90% of usable scans matched a participant id")
+    if schema.BRAIN_AGE_COL in df.columns:
+        ok = df[schema.BRAIN_AGE_COL].notna() & df[schema.AGE_COL].notna()
+        if ok.sum() > 10:
+            r_ba = np.corrcoef(df.loc[ok, schema.BRAIN_AGE_COL], df.loc[ok, schema.AGE_COL])[0, 1]
+            L.append(f"Predicted brain age vs chronological age: r = {r_ba:+.3f} (n = {int(ok.sum())})")
+            # A brain-age model always tracks real age somewhat; a correlation
+            # near zero means the scans are attached to the wrong people.
+            if r_ba < 0.1:
+                err("predicted brain age barely correlates with age: scans are probably "
+                    "linked to the wrong participants")
+            elif r_ba < 0.3:
+                warn("predicted brain age correlates weakly with age; spot-check the scan linkage")
 
     # BAG sanity
     bag, age = df[schema.TARGET_COL], df[schema.AGE_COL]
